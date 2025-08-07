@@ -207,126 +207,95 @@ class PilatesBooking {
             
             await this.takeScreenshot(page, '04-time-table');
             
-            // 10:30 수업 찾기 및 예약
+            // 10:30 수업 찾기 - 개선된 버전
             const result = await page.evaluate(() => {
                 const rows = document.querySelectorAll('tr');
-                let foundTarget = false;
                 
                 for (let row of rows) {
                     const cells = row.querySelectorAll('td');
+                    let found1030 = false;
+                    let timeIndex = -1;
                     
+                    // 10:30 시간 찾기
                     for (let i = 0; i < cells.length; i++) {
                         const cellText = cells[i].textContent.trim();
-                        
-                        // 10:30 시간 찾기
                         if (cellText.includes('10:30') || 
                             cellText.includes('10시30분') ||
                             cellText.includes('오전 10:30')) {
+                            found1030 = true;
+                            timeIndex = i;
+                            console.log('✅ 10:30 수업 발견!');
+                            break;
+                        }
+                    }
+                    
+                    if (found1030) {
+                        // 같은 행에서 예약 관련 요소 찾기
+                        for (let j = 0; j < cells.length; j++) {
+                            const actionCell = cells[j];
+                            const links = actionCell.querySelectorAll('a');
                             
-                            console.log('✅ 10:30 수업 발견! 행 내용:', row.textContent);
-                            foundTarget = true;
-                            
-                            // 같은 행에서 예약 관련 요소 찾기
-                            for (let j = 0; j < cells.length; j++) {
-                                const actionCell = cells[j];
-                                const actionText = actionCell.textContent.trim();
+                            for (let link of links) {
+                                const linkText = link.textContent.trim();
                                 
                                 // 예약하기 버튼 찾기
-                                if (actionText === '예약하기' || actionText.includes('예약하기')) {
-                                    const bookLink = actionCell.querySelector('a');
-                                    if (bookLink) {
-                                        const onclickAttr = bookLink.getAttribute('onclick');
-                                        console.log('예약하기 onclick:', onclickAttr);
-                                        
-                                        // onclick 함수 실행
-                                        if (onclickAttr) {
-                                            try {
-                                                eval(onclickAttr);
-                                                return {
-                                                    found: true,
-                                                    booked: true,
-                                                    message: '10:30 수업 예약 함수 실행',
-                                                    needSubmit: false,
-                                                    onclickFunction: onclickAttr
-                                                };
-                                            } catch(e) {
-                                                console.error('onclick 실행 실패:', e);
-                                                bookLink.click();
-                                                return {
-                                                    found: true,
-                                                    booked: true,
-                                                    message: '10:30 수업 예약 클릭 (폴백)',
-                                                    needSubmit: true
-                                                };
-                                            }
-                                        } else {
-                                            bookLink.click();
+                                if (linkText === '예약하기' || linkText.includes('예약하기')) {
+                                    console.log('예약하기 버튼 발견!');
+                                    
+                                    // onclick 속성 확인
+                                    const onclickAttr = link.getAttribute('onclick');
+                                    if (onclickAttr && onclickAttr.includes('inltxt')) {
+                                        // inltxt 함수가 있으면 실행
+                                        console.log('inltxt 함수 발견:', onclickAttr);
+                                        try {
+                                            // inltxt 함수 실행
+                                            eval(onclickAttr);
+                                            // 그 다음 링크 클릭
+                                            link.click();
                                             return {
                                                 found: true,
                                                 booked: true,
-                                                message: '10:30 수업 예약 클릭',
+                                                message: '10:30 수업 예약 클릭 (inltxt 실행)',
                                                 needSubmit: true
                                             };
+                                        } catch(e) {
+                                            console.error('inltxt 실행 실패:', e);
                                         }
                                     }
-                                }
-                                
-                                // 대기예약
-                                else if (actionText.includes('대기')) {
-                                    const waitLink = actionCell.querySelector('a');
-                                    if (waitLink) {
-                                        const onclickAttr = waitLink.getAttribute('onclick');
-                                        console.log('대기예약 onclick:', onclickAttr);
-                                        
-                                        if (onclickAttr) {
-                                            try {
-                                                eval(onclickAttr);
-                                                return {
-                                                    found: true,
-                                                    booked: true,
-                                                    message: '10:30 수업 대기예약 함수 실행',
-                                                    isWaitingOnly: true,
-                                                    needSubmit: false,
-                                                    onclickFunction: onclickAttr
-                                                };
-                                            } catch(e) {
-                                                console.error('대기예약 onclick 실행 실패:', e);
-                                                waitLink.click();
-                                                return {
-                                                    found: true,
-                                                    booked: true,
-                                                    message: '10:30 수업 대기예약 클릭 (폴백)',
-                                                    isWaitingOnly: true,
-                                                    needSubmit: true
-                                                };
-                                            }
-                                        } else {
-                                            waitLink.click();
-                                            return {
-                                                found: true,
-                                                booked: true,
-                                                message: '10:30 수업 대기예약 클릭',
-                                                isWaitingOnly: true,
-                                                needSubmit: true
-                                            };
-                                        }
-                                    }
-                                }
-                                
-                                // 삭제 버튼 (이미 예약됨)
-                                else if (actionText === '삭제' || actionText.includes('취소')) {
+                                    
+                                    // onclick이 없거나 실패한 경우 직접 클릭
+                                    link.click();
                                     return {
                                         found: true,
-                                        booked: false,
-                                        message: '10:30 수업은 이미 예약되어 있음'
+                                        booked: true,
+                                        message: '10:30 수업 예약 클릭',
+                                        needSubmit: true
+                                    };
+                                }
+                                
+                                // 대기예약 버튼
+                                else if (linkText === '대기예약' || linkText.includes('대기')) {
+                                    console.log('대기예약 버튼 발견!');
+                                    link.click();
+                                    return {
+                                        found: true,
+                                        booked: true,
+                                        message: '10:30 수업 대기예약',
+                                        isWaitingOnly: true,
+                                        needSubmit: true
                                     };
                                 }
                             }
-                            
-                            // 행 전체 내용 확인
-                            if (foundTarget) {
-                                console.log('10:30 수업 행 전체:', row.innerHTML);
-                            }
+                        }
+                        
+                        // 예약 불가 상태 확인
+                        const rowText = row.textContent;
+                        if (rowText.includes('삭제')) {
+                            return {
+                                found: true,
+                                booked: false,
+                                message: '10:30 수업은 이미 예약되어 있음'
+                            };
                         }
                     }
                 }
@@ -340,31 +309,83 @@ class PilatesBooking {
             
             await this.log(`🔍 검색 결과: ${result.message}`);
             
-            if (result.onclickFunction) {
-                await this.log(`📝 실행된 함수: ${result.onclickFunction}`);
-            }
-            
-            // onclick으로 처리된 경우 페이지 변화 대기
-            if (result.booked && !result.needSubmit) {
-                await this.log('⏳ 예약 처리 대기 중...');
-                await page.waitForTimeout(3000);
+            // Submit 버튼 처리 - 중요!
+            if (!this.testMode && result.booked && result.needSubmit) {
+                await this.log('📝 Submit 버튼 찾는 중...');
+                await page.waitForTimeout(1000);
                 
-                // 예약 성공 메시지 확인
-                const successMessage = await page.evaluate(() => {
-                    const bodyText = document.body.innerText;
-                    if (bodyText.includes('예약완료') || 
-                        bodyText.includes('예약 완료') ||
-                        bodyText.includes('예약이 완료') ||
-                        bodyText.includes('대기예약 완료')) {
-                        return true;
+                // Submit 버튼 찾기 및 클릭
+                const submitClicked = await page.evaluate(() => {
+                    // 다양한 Submit 버튼 패턴 찾기
+                    const buttons = document.querySelectorAll(
+                        'input[type="submit"], ' +
+                        'button[type="submit"], ' +
+                        'input[type="button"], ' +
+                        'button'
+                    );
+                    
+                    console.log('버튼 개수:', buttons.length);
+                    
+                    for (let btn of buttons) {
+                        const text = (btn.value || btn.textContent || '').trim();
+                        console.log('버튼 텍스트:', text);
+                        
+                        // Submit, 예약, 확인 등의 텍스트가 있는 버튼 클릭
+                        if (text.toLowerCase() === 'submit' || 
+                            text.includes('예약') || 
+                            text.includes('확인') ||
+                            text.includes('등록')) {
+                            console.log('Submit 버튼 클릭:', text);
+                            btn.click();
+                            return true;
+                        }
                     }
+                    
+                    // 버튼을 못찾았으면 form submit 시도
+                    const forms = document.querySelectorAll('form');
+                    for (let form of forms) {
+                        if (form.name === 'preform' || form.action.includes('res')) {
+                            console.log('Form submit 시도');
+                            form.submit();
+                            return true;
+                        }
+                    }
+                    
                     return false;
                 });
                 
-                if (successMessage) {
-                    await this.log('✅ 예약 완료 메시지 확인!');
-                    await this.takeScreenshot(page, '07-booking-complete');
+                if (submitClicked) {
+                    await this.log('✅ Submit 완료!');
+                    await page.waitForTimeout(3000);
+                    await this.takeScreenshot(page, '06-after-submit');
+                    
+                    // 예약 완료 메시지 확인
+                    const successMessage = await page.evaluate(() => {
+                        const bodyText = document.body.innerText;
+                        return bodyText.includes('예약완료') || 
+                               bodyText.includes('예약 완료') ||
+                               bodyText.includes('예약이 완료');
+                    });
+                    
+                    if (successMessage) {
+                        await this.log('✅ 예약 완료 메시지 확인!');
+                    }
+                } else {
+                    await this.log('⚠️ Submit 버튼을 찾을 수 없음 - 수동 Submit 시도');
+                    
+                    // 대안: JavaScript로 form submit
+                    await page.evaluate(() => {
+                        if (typeof prores === 'function') {
+                            // prores 함수가 있으면 실행
+                            console.log('prores 함수 실행 시도');
+                            prores(3, 'Y'); // 10:30은 보통 3번째 슬롯
+                        }
+                    });
+                    
+                    await page.waitForTimeout(2000);
                 }
+                
+                await this.takeScreenshot(page, '07-booking-complete');
             }
             
             return result;
