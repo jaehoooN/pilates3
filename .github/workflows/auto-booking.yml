@@ -1,0 +1,104 @@
+name: 🏋️ 필라테스 자동 예약 (개선된 버전)
+
+on:
+  schedule:
+    # 한국시간 매일 11:59:30 (UTC 02:59:30)
+    # GitHub Actions는 분 단위까지만 지원하므로 초는 스크립트에서 처리
+    - cron: '59 2 * * *'
+  
+  workflow_dispatch:
+    inputs:
+      skip_wait:
+        description: '12시 대기 건너뛰기'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      test_mode:
+        description: '테스트 모드 (실제 예약하지 않음)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  booking:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+    - name: 📥 코드 체크아웃
+      uses: actions/checkout@v4
+    
+    - name: 📦 Node.js 설정
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+    
+    - name: 🔧 의존성 설치
+      run: npm ci
+    
+    - name: ⏰ 12시까지 대기
+      if: github.event_name == 'schedule' || github.event.inputs.skip_wait == 'false'
+      run: node wait-until-noon.js
+    
+    - name: 🎯 예약 실행
+      env:
+        PILATES_USERNAME: ${{ secrets.PILATES_USERNAME }}
+        PILATES_PASSWORD: ${{ secrets.PILATES_PASSWORD }}
+        SKIP_WAIT: ${{ github.event.inputs.skip_wait }}
+        TEST_MODE: ${{ github.event.inputs.test_mode }}
+        NODE_ENV: production
+        HEADLESS: true
+      run: |
+        node booking-script.js
+      continue-on-error: true
+    
+    - name: 📊 결과 확인
+      id: check-result
+      run: |
+        if [ -f "booking-result.json" ]; then
+          echo "status=$(cat booking-result.json | jq -r '.status')" >> $GITHUB_OUTPUT
+          echo "message=$(cat booking-result.json | jq -r '.message')" >> $GITHUB_OUTPUT
+          echo "type=$(cat booking-result.json | jq -r '.type // "unknown"')" >> $GITHUB_OUTPUT
+          cat booking-result.json
+        else
+          echo "status=FAILED" >> $GITHUB_OUTPUT
+          echo "message=Result file not found" >> $GITHUB_OUTPUT
+          echo "type=error" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: 📸 결과 저장
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: booking-result-${{ github.run_number }}
+        path: |
+          screenshots/
+          logs/
+          booking-result.json
+          test-result.json
+        retention-days: 30
+    
+    - name: 📧 실패 시 알림
+      if: failure() && steps.check-result.outputs.status == 'FAILED'
+      run: |
+        echo "❌ 예약 실패: ${{ steps.check-result.outputs.message }}"
+        # 여기에 Slack, Discord, Email 등 알림 설정 가능
+    
+    - name: ⚠️ 대기예약 알림
+      if: success() && steps.check-result.outputs.status == 'WAITING'
+      run: |
+        echo "⚠️ 대기예약 등록: ${{ steps.check-result.outputs.message }}"
+        echo "취소가 발생하면 자동으로 예약됩니다."
+    
+    - name: ✅ 성공 시 알림
+      if: success() && steps.check-result.outputs.status == 'SUCCESS'
+      run: |
+        echo "✅ 예약 성공: ${{ steps.check-result.outputs.message }}"
+        # 여기에 성공 알림 설정 가능
