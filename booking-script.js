@@ -18,17 +18,6 @@ class PilatesBooking {
         // 테스트 모드 설정
         this.testMode = process.env.TEST_MODE === 'true';
         this.skipWait = process.env.SKIP_WAIT === 'true';
-        
-        // 핵심 셀렉터 정의 (세션 1 분석 기반)
-        this.selectors = {
-            login_id: 'input#user_id',
-            login_pw: 'input#passwd',
-            login_btn: 'button[type="submit"]',
-            time_10_30: 'td:has-text("오전 10:30"), td:has-text("10:30")',
-            reservation_btn: 'a:has-text("예약하기")',
-            waiting_btn: 'a:has-text("대기예약")',
-            submit_btn: 'button:has-text("Submit"), input[type="submit"], button:has-text("예약")'
-        };
     }
 
     async init() {
@@ -75,39 +64,57 @@ class PilatesBooking {
         await this.log('🔐 로그인 시도...');
         
         try {
-            // 메인 페이지로 이동
-            await page.goto(this.baseUrl, {
+            // 인코딩 설정
+            await page.setExtraHTTPHeaders({
+                'Accept-Language': 'ko-KR,ko;q=0.9',
+                'Accept-Charset': 'UTF-8'
+            });
+            
+            // 로그인 페이지로 이동 (기존 URL 유지)
+            await page.goto(`${this.baseUrl}/yeapp/yeapp.php?tm=102`, {
                 waitUntil: 'networkidle2',
                 timeout: 30000
             });
             
-            await this.takeScreenshot(page, '01-main-page');
+            await this.takeScreenshot(page, '01-login-page');
             
-            // 로그인 폼 대기
-            await page.waitForSelector(this.selectors.login_id, { timeout: 10000 });
+            // 이미 로그인된 상태인지 확인
+            const logoutLink = await page.$('a[href*="yeout.php"]');
+            if (logoutLink) {
+                await this.log('✅ 이미 로그인된 상태');
+                return true;
+            }
             
-            // 아이디 입력 (개선: 클리어 후 입력)
-            const idInput = await page.$(this.selectors.login_id);
-            await idInput.click({ clickCount: 3 });
-            await page.type(this.selectors.login_id, this.username, { delay: 100 });
+            // 로그인 폼 입력 - 기존 방식 유지
+            await page.waitForSelector('input[name="name"]', { timeout: 10000 });
             
-            // 비밀번호 입력
-            const pwInput = await page.$(this.selectors.login_pw);
-            await pwInput.click({ clickCount: 3 });
-            await page.type(this.selectors.login_pw, this.password, { delay: 100 });
+            // 입력 필드 클리어 후 입력
+            const useridInput = await page.$('input[name="name"]');
+            await useridInput.click({ clickCount: 3 });
+            await page.type('input[name="name"]', this.username, { delay: 100 });
+            
+            const userpwInput = await page.$('input[name="passwd"]');
+            await userpwInput.click({ clickCount: 3 });
+            await page.type('input[name="passwd"]', this.password, { delay: 100 });
             
             await this.log(`📝 입력 정보: 이름=${this.username}, 번호=${this.password}`);
-            await this.takeScreenshot(page, '02-login-form');
             
             // 로그인 버튼 클릭
             await Promise.all([
                 page.waitForNavigation({ waitUntil: 'networkidle2' }),
-                page.click(this.selectors.login_btn)
+                page.click('input[type="submit"]')
             ]);
             
-            await this.takeScreenshot(page, '03-after-login');
+            await this.takeScreenshot(page, '02-after-login');
             
-            await this.log('✅ 로그인 성공');
+            // 로그인 성공 확인
+            const currentUrl = page.url();
+            if (currentUrl.includes('res_postform.php')) {
+                await this.log('✅ 로그인 성공 - 예약 페이지 진입');
+                return true;
+            }
+            
+            await this.log('✅ 로그인 완료');
             return true;
             
         } catch (error) {
@@ -128,46 +135,41 @@ class PilatesBooking {
         
         await this.log(`📆 예약 날짜: ${year}년 ${month}월 ${day}일`);
         
-        try {
-            // 예약 페이지로 이동
-            await page.goto(`${this.baseUrl}/yeapp/yeapp.php?tm=102`, {
-                waitUntil: 'networkidle2'
-            });
+        // 현재 페이지가 이미 예약 페이지인지 확인
+        const currentUrl = page.url();
+        if (currentUrl.includes('res_postform.php')) {
+            await this.log('📍 이미 예약 페이지에 있음');
             
-            await page.waitForTimeout(2000);
-            await this.takeScreenshot(page, '04-calendar-page');
-            
-            // 날짜가 예약 가능한지 확인 (X 표시 확인)
-            const isDateAvailable = await page.evaluate((targetDay) => {
+            // 해당 날짜 클릭
+            const dateClicked = await page.evaluate((targetDay) => {
                 const cells = document.querySelectorAll('td');
+                
                 for (let cell of cells) {
                     const text = cell.textContent.trim();
+                    
                     // 정확한 날짜 매칭
                     if (text === String(targetDay) || 
                         (text.startsWith(String(targetDay)) && !text.includes('X'))) {
-                        // 링크가 있으면 클릭 가능
-                        const link = cell.querySelector('a');
-                        return !!link;
-                    }
-                }
-                return false;
-            }, day);
-            
-            if (!isDateAvailable) {
-                await this.log(`⚠️ ${day}일은 예약이 불가능합니다 (마감 또는 X 표시)`);
-                throw new Error('예약 불가능한 날짜');
-            }
-            
-            // 날짜 클릭
-            const dateClicked = await page.evaluate((targetDay) => {
-                const cells = document.querySelectorAll('td');
-                for (let cell of cells) {
-                    const text = cell.textContent.trim();
-                    if (text === String(targetDay) || 
-                        (text.startsWith(String(targetDay)) && !text.includes('X'))) {
+                        
+                        // 클릭 가능한 요소 찾기
                         const link = cell.querySelector('a');
                         if (link) {
-                            link.click();
+                            // onclick 속성 확인
+                            const onclickAttr = link.getAttribute('onclick');
+                            if (onclickAttr) {
+                                console.log('onclick 발견:', onclickAttr);
+                                // JavaScript 함수 직접 실행
+                                try {
+                                    eval(onclickAttr);
+                                } catch(e) {
+                                    link.click();
+                                }
+                            } else {
+                                link.click();
+                            }
+                            return true;
+                        } else if (!text.includes('X')) {
+                            cell.click();
                             return true;
                         }
                     }
@@ -177,17 +179,20 @@ class PilatesBooking {
             
             if (dateClicked) {
                 await this.log(`✅ ${day}일 클릭 완료`);
-                await page.waitForTimeout(3000); // 시간표 로딩 대기
-                await this.takeScreenshot(page, '05-timetable');
+                // 페이지 로드 대기
+                await page.waitForTimeout(3000);
+                
+                // 페이지 이동 확인
+                const newUrl = page.url();
+                if (newUrl !== currentUrl) {
+                    await this.log(`📍 새 페이지로 이동: ${newUrl}`);
+                }
             } else {
-                throw new Error('날짜 클릭 실패');
+                await this.log(`⚠️ ${day}일 예약 불가 또는 마감`);
             }
-            
-        } catch (error) {
-            await this.log(`❌ 예약 페이지 이동 실패: ${error.message}`);
-            throw error;
         }
         
+        await this.takeScreenshot(page, '03-booking-page');
         return { year, month, day };
     }
 
@@ -195,207 +200,174 @@ class PilatesBooking {
         await this.log('🔍 10:30 수업 찾는 중...');
         
         try {
-            await page.waitForSelector('table', { timeout: 5000 });
+            // 테이블 로드 대기
+            await page.waitForSelector('table', { timeout: 5000 }).catch(() => {
+                this.log('⚠️ 테이블 로드 대기 시간 초과');
+            });
             
-            // 10:30 수업 찾기 및 예약 상태 확인
+            await this.takeScreenshot(page, '04-time-table');
+            
+            // 10:30 수업 찾기 및 예약
             const result = await page.evaluate(() => {
                 const rows = document.querySelectorAll('tr');
+                let foundTarget = false;
                 
                 for (let row of rows) {
                     const cells = row.querySelectorAll('td');
-                    let found1030 = false;
                     
-                    // 10:30 시간 찾기
-                    for (let cell of cells) {
-                        const text = cell.textContent.trim();
-                        if (text.includes('10:30') || text.includes('10시30분')) {
-                            found1030 = true;
-                            break;
-                        }
-                    }
-                    
-                    if (found1030) {
-                        // 같은 행에서 예약 상태 확인
-                        const rowText = row.textContent;
+                    for (let i = 0; i < cells.length; i++) {
+                        const cellText = cells[i].textContent.trim();
                         
-                        // 예약하기 버튼 찾기
-                        const reserveLink = row.querySelector('a');
-                        if (reserveLink) {
-                            const linkText = reserveLink.textContent.trim();
+                        // 10:30 시간 찾기
+                        if (cellText.includes('10:30') || 
+                            cellText.includes('10시30분') ||
+                            cellText.includes('오전 10:30')) {
                             
-                            if (linkText === '예약하기') {
-                                // 일반 예약 가능
-                                return {
-                                    found: true,
-                                    type: 'normal',
-                                    canBook: true,
-                                    message: '예약하기 가능'
-                                };
-                            } else if (linkText === '대기예약' || linkText.includes('대기')) {
-                                // 대기예약만 가능
-                                return {
-                                    found: true,
-                                    type: 'waiting',
-                                    canBook: true,
-                                    message: '대기예약만 가능 (정원 초과)'
-                                };
+                            console.log('✅ 10:30 수업 발견! 행 내용:', row.textContent);
+                            foundTarget = true;
+                            
+                            // 같은 행에서 예약 관련 요소 찾기
+                            for (let j = 0; j < cells.length; j++) {
+                                const actionCell = cells[j];
+                                const actionText = actionCell.textContent.trim();
+                                
+                                // 예약하기 버튼 찾기
+                                if (actionText === '예약하기' || actionText.includes('예약하기')) {
+                                    const bookLink = actionCell.querySelector('a');
+                                    if (bookLink) {
+                                        const onclickAttr = bookLink.getAttribute('onclick');
+                                        console.log('예약하기 onclick:', onclickAttr);
+                                        
+                                        // onclick 함수 실행
+                                        if (onclickAttr) {
+                                            try {
+                                                eval(onclickAttr);
+                                                return {
+                                                    found: true,
+                                                    booked: true,
+                                                    message: '10:30 수업 예약 함수 실행',
+                                                    needSubmit: false,
+                                                    onclickFunction: onclickAttr
+                                                };
+                                            } catch(e) {
+                                                console.error('onclick 실행 실패:', e);
+                                                bookLink.click();
+                                                return {
+                                                    found: true,
+                                                    booked: true,
+                                                    message: '10:30 수업 예약 클릭 (폴백)',
+                                                    needSubmit: true
+                                                };
+                                            }
+                                        } else {
+                                            bookLink.click();
+                                            return {
+                                                found: true,
+                                                booked: true,
+                                                message: '10:30 수업 예약 클릭',
+                                                needSubmit: true
+                                            };
+                                        }
+                                    }
+                                }
+                                
+                                // 대기예약
+                                else if (actionText.includes('대기')) {
+                                    const waitLink = actionCell.querySelector('a');
+                                    if (waitLink) {
+                                        const onclickAttr = waitLink.getAttribute('onclick');
+                                        console.log('대기예약 onclick:', onclickAttr);
+                                        
+                                        if (onclickAttr) {
+                                            try {
+                                                eval(onclickAttr);
+                                                return {
+                                                    found: true,
+                                                    booked: true,
+                                                    message: '10:30 수업 대기예약 함수 실행',
+                                                    isWaitingOnly: true,
+                                                    needSubmit: false,
+                                                    onclickFunction: onclickAttr
+                                                };
+                                            } catch(e) {
+                                                console.error('대기예약 onclick 실행 실패:', e);
+                                                waitLink.click();
+                                                return {
+                                                    found: true,
+                                                    booked: true,
+                                                    message: '10:30 수업 대기예약 클릭 (폴백)',
+                                                    isWaitingOnly: true,
+                                                    needSubmit: true
+                                                };
+                                            }
+                                        } else {
+                                            waitLink.click();
+                                            return {
+                                                found: true,
+                                                booked: true,
+                                                message: '10:30 수업 대기예약 클릭',
+                                                isWaitingOnly: true,
+                                                needSubmit: true
+                                            };
+                                        }
+                                    }
+                                }
+                                
+                                // 삭제 버튼 (이미 예약됨)
+                                else if (actionText === '삭제' || actionText.includes('취소')) {
+                                    return {
+                                        found: true,
+                                        booked: false,
+                                        message: '10:30 수업은 이미 예약되어 있음'
+                                    };
+                                }
+                            }
+                            
+                            // 행 전체 내용 확인
+                            if (foundTarget) {
+                                console.log('10:30 수업 행 전체:', row.innerHTML);
                             }
                         }
-                        
-                        // 기타 상태 확인
-                        if (rowText.includes('시간초과')) {
-                            return {
-                                found: true,
-                                type: 'timeout',
-                                canBook: false,
-                                message: '시간초과 (9:30 이전)'
-                            };
-                        } else if (rowText.includes('삭제') || rowText.includes('취소')) {
-                            return {
-                                found: true,
-                                type: 'already',
-                                canBook: false,
-                                message: '이미 예약됨'
-                            };
-                        }
-                        
-                        return {
-                            found: true,
-                            type: 'unknown',
-                            canBook: false,
-                            message: '예약 불가 상태'
-                        };
                     }
                 }
                 
                 return {
                     found: false,
-                    canBook: false,
+                    booked: false,
                     message: '10:30 수업을 찾을 수 없음'
                 };
             });
             
             await this.log(`🔍 검색 결과: ${result.message}`);
             
-            if (!result.found) {
-                return { found: false, booked: false };
+            if (result.onclickFunction) {
+                await this.log(`📝 실행된 함수: ${result.onclickFunction}`);
             }
             
-            if (!result.canBook) {
-                await this.log(`⚠️ 예약 불가: ${result.message}`);
-                return { found: true, booked: false, message: result.message };
-            }
-            
-            // 테스트 모드면 여기서 종료
-            if (this.testMode) {
-                await this.log('✅ 테스트 모드 - 실제 예약하지 않음');
-                return { 
-                    found: true, 
-                    booked: false, 
-                    type: result.type,
-                    message: `테스트: ${result.message}`
-                };
-            }
-            
-            // 실제 예약 진행
-            if (result.type === 'normal') {
-                // 일반 예약
-                await this.log('📝 일반 예약 진행...');
+            // onclick으로 처리된 경우 페이지 변화 대기
+            if (result.booked && !result.needSubmit) {
+                await this.log('⏳ 예약 처리 대기 중...');
+                await page.waitForTimeout(3000);
                 
-                // 예약하기 클릭
-                await page.evaluate(() => {
-                    const links = document.querySelectorAll('a');
-                    for (let link of links) {
-                        if (link.textContent.trim() === '예약하기') {
-                            // 10:30 행에 있는 것인지 확인
-                            const row = link.closest('tr');
-                            if (row && row.textContent.includes('10:30')) {
-                                link.click();
-                                return true;
-                            }
-                        }
+                // 예약 성공 메시지 확인
+                const successMessage = await page.evaluate(() => {
+                    const bodyText = document.body.innerText;
+                    if (bodyText.includes('예약완료') || 
+                        bodyText.includes('예약 완료') ||
+                        bodyText.includes('예약이 완료') ||
+                        bodyText.includes('대기예약 완료')) {
+                        return true;
                     }
                     return false;
                 });
                 
-                await page.waitForTimeout(1000);
-                
-                // Submit 버튼 클릭
-                const submitClicked = await page.evaluate(() => {
-                    const buttons = document.querySelectorAll('button, input[type="submit"]');
-                    for (let btn of buttons) {
-                        const text = (btn.textContent || btn.value || '').trim();
-                        if (text === 'Submit' || text.includes('예약') || text === '확인') {
-                            btn.click();
-                            return true;
-                        }
-                    }
-                    return false;
-                });
-                
-                if (submitClicked) {
-                    await this.log('✅ Submit 완료');
-                    await page.waitForTimeout(2000);
-                    await this.takeScreenshot(page, '06-reservation-complete');
+                if (successMessage) {
+                    await this.log('✅ 예약 완료 메시지 확인!');
+                    await this.takeScreenshot(page, '07-booking-complete');
                 }
-                
-                return { 
-                    found: true, 
-                    booked: true, 
-                    type: 'normal',
-                    message: '일반 예약 완료'
-                };
-                
-            } else if (result.type === 'waiting') {
-                // 대기예약
-                await this.log('📝 대기예약 진행...');
-                
-                // 대기예약 클릭
-                await page.evaluate(() => {
-                    const links = document.querySelectorAll('a');
-                    for (let link of links) {
-                        const text = link.textContent.trim();
-                        if (text === '대기예약' || text.includes('대기')) {
-                            // 10:30 행에 있는 것인지 확인
-                            const row = link.closest('tr');
-                            if (row && row.textContent.includes('10:30')) {
-                                link.click();
-                                return true;
-                            }
-                        }
-                    }
-                    return false;
-                });
-                
-                // confirm 팝업 처리는 dialog 이벤트 핸들러에서 자동 처리됨
-                await page.waitForTimeout(1500);
-                
-                // Submit 버튼 클릭
-                const submitClicked = await page.evaluate(() => {
-                    const buttons = document.querySelectorAll('button, input[type="submit"]');
-                    for (let btn of buttons) {
-                        const text = (btn.textContent || btn.value || '').trim();
-                        if (text === 'Submit' || text.includes('예약') || text === '확인') {
-                            btn.click();
-                            return true;
-                        }
-                    }
-                    return false;
-                });
-                
-                if (submitClicked) {
-                    await this.log('✅ 대기예약 Submit 완료');
-                    await page.waitForTimeout(2000);
-                    await this.takeScreenshot(page, '07-waiting-complete');
-                }
-                
-                return { 
-                    found: true, 
-                    booked: true, 
-                    type: 'waiting',
-                    message: '대기예약 완료 (*표시)'
-                };
             }
+            
+            return result;
             
         } catch (error) {
             await this.log(`❌ 예약 과정 에러: ${error.message}`);
@@ -404,41 +376,44 @@ class PilatesBooking {
         }
     }
 
-    async verifyBooking(page, bookingType) {
+    async verifyBooking(page) {
         await this.log('🔍 예약 확인 중...');
         
         try {
-            // 캘린더로 돌아가기
-            await page.goto(`${this.baseUrl}/yeapp/yeapp.php?tm=102`, {
+            // 예약 확인 페이지로 이동
+            await page.goto(`${this.baseUrl}/yeapp/yeapp.php?tm=103`, {
                 waitUntil: 'networkidle2'
             });
             
             await page.waitForTimeout(2000);
             
-            // 예약 확인 (대기예약은 * 표시, 일반예약은 숫자 변화)
-            const targetDate = new Date();
-            targetDate.setDate(targetDate.getDate() + 7);
-            const day = targetDate.getDate();
-            
-            const verificationResult = await page.evaluate((targetDay, type) => {
-                const cells = document.querySelectorAll('td');
-                for (let cell of cells) {
-                    const text = cell.textContent.trim();
-                    if (text.includes(String(targetDay))) {
-                        if (type === 'waiting' && text.includes('*')) {
-                            return { verified: true, message: '대기예약 확인 (*표시)' };
-                        } else if (type === 'normal' && !text.includes('X')) {
-                            return { verified: true, message: '일반예약 확인' };
-                        }
-                    }
+            const bookingVerified = await page.evaluate(() => {
+                const bodyText = document.body.innerText;
+                
+                // 7일 후 날짜 계산
+                const targetDate = new Date();
+                targetDate.setDate(targetDate.getDate() + 7);
+                const month = targetDate.getMonth() + 1;
+                const day = targetDate.getDate();
+                
+                // 예약 내역에서 확인
+                if (bodyText.includes('10:30') && 
+                    (bodyText.includes(`${month}월`) && bodyText.includes(`${day}일`))) {
+                    return true;
                 }
-                return { verified: false, message: '예약 확인 실패' };
-            }, day, bookingType);
+                
+                return false;
+            });
             
-            await this.log(verificationResult.message);
-            await this.takeScreenshot(page, '08-verification');
-            
-            return verificationResult.verified;
+            if (bookingVerified) {
+                await this.log('✅ 예약이 정상적으로 확인되었습니다!');
+                await this.takeScreenshot(page, '08-booking-verified');
+                return true;
+            } else {
+                await this.log('⚠️ 예약 내역에서 확인되지 않음');
+                await this.takeScreenshot(page, '08-booking-not-found');
+                return false;
+            }
             
         } catch (error) {
             await this.log(`⚠️ 예약 확인 실패: ${error.message}`);
@@ -457,9 +432,11 @@ class PilatesBooking {
         
         let retryCount = 0;
         let success = false;
-        let bookingResult = null;
         
         while (retryCount < this.maxRetries && !success) {
+            const isGitHubActions = process.env.GITHUB_ACTIONS === 'true';
+            const isCI = process.env.CI === 'true';
+            
             const browser = await puppeteer.launch({
                 headless: process.env.HEADLESS !== 'false' ? 'new' : false,
                 args: [
@@ -467,42 +444,26 @@ class PilatesBooking {
                     '--disable-setuid-sandbox',
                     '--disable-dev-shm-usage',
                     '--disable-gpu',
+                    '--disable-web-security',
+                    '--disable-features=IsolateOrigins,site-per-process',
                     '--window-size=1920,1080',
-                    '--lang=ko-KR'
+                    '--lang=ko-KR',
+                    ...(isGitHubActions || isCI ? ['--single-process', '--no-zygote'] : [])
                 ]
             });
             
             try {
                 const page = await browser.newPage();
                 
+                // 페이지 인코딩 설정
+                await page.evaluateOnNewDocument(() => {
+                    document.charset = "UTF-8";
+                });
+                
                 // 설정
                 page.setDefaultTimeout(30000);
                 await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
                 await page.setViewport({ width: 1920, height: 1080 });
-                
-                // 인코딩 설정
-                await page.setExtraHTTPHeaders({
-                    'Accept-Language': 'ko-KR,ko;q=0.9',
-                    'Accept-Charset': 'UTF-8'
-                });
-                
-                // Dialog 처리 (대기예약 confirm 처리 - 세션 1 핵심)
-                page.on('dialog', async dialog => {
-                    const message = dialog.message();
-                    await this.log(`📢 팝업 메시지: ${message}`);
-                    
-                    // 대기예약 confirm 처리
-                    if (message.includes('대기예약') || message.includes('정원이 초과')) {
-                        await this.log('✅ 대기예약 확인 팝업 - 수락');
-                        await dialog.accept();
-                    } else if (message.includes('예약') && message.includes('완료')) {
-                        await this.log('✅ 예약 완료 팝업');
-                        await dialog.accept();
-                        success = true;
-                    } else {
-                        await dialog.accept();
-                    }
-                });
                 
                 // 콘솔 로그 캡처
                 page.on('console', msg => {
@@ -511,54 +472,78 @@ class PilatesBooking {
                     }
                 });
                 
+                // 알림 처리
+                page.on('dialog', async dialog => {
+                    const message = dialog.message();
+                    await this.log(`📢 알림: ${message}`);
+                    
+                    // 예약 성공 메시지 확인
+                    if (message.includes('예약') && 
+                        (message.includes('완료') || message.includes('성공'))) {
+                        success = true;
+                        await this.log('🎉 예약 성공 알림 확인!');
+                    }
+                    
+                    // 대기예약 확인
+                    if (message.includes('대기예약') || message.includes('정원이 초과')) {
+                        await this.log('⚠️ 대기예약 확인 팝업');
+                    }
+                    
+                    // 로그인 실패 메시지 확인
+                    if (message.includes('등록되어 있지 않습니다')) {
+                        await dialog.accept();
+                        throw new Error('로그인 정보 오류');
+                    }
+                    
+                    await dialog.accept();
+                });
+                
                 // 1. 로그인
                 await this.login(page);
                 
-                // 2. 예약 페이지로 이동 및 날짜 선택
+                // 2. 예약 페이지로 이동
                 const dateInfo = await this.navigateToBookingPage(page);
                 
                 // 3. 10:30 수업 찾고 예약
-                bookingResult = await this.find1030ClassAndBook(page);
+                const result = await this.find1030ClassAndBook(page);
                 
-                // 4. 예약 확인
-                if (!this.testMode && bookingResult.booked) {
-                    const verified = await this.verifyBooking(page, bookingResult.type);
+                // 4. 예약 확인 (테스트 모드가 아닌 경우)
+                if (!this.testMode && result.booked) {
+                    const verified = await this.verifyBooking(page);
                     if (verified) {
                         success = true;
                     }
-                } else if (this.testMode && bookingResult.found) {
+                } else if (this.testMode && result.found) {
                     success = true;
                 }
                 
-                if (success || (bookingResult && bookingResult.booked)) {
-                    await this.log('🎉🎉🎉 예약 프로세스 완료! 🎉🎉🎉');
+                if (success) {
+                    await this.log('🎉🎉🎉 프로세스 완료! 🎉🎉🎉');
                     
                     // 결과 저장
                     const resultInfo = {
                         timestamp: new Date().toISOString(),
                         date: `${dateInfo.year}-${dateInfo.month}-${dateInfo.day}`,
                         class: '10:30',
-                        status: bookingResult.type === 'waiting' ? 'WAITING' : 'SUCCESS',
-                        message: bookingResult.message,
+                        status: this.testMode ? 'TEST' : (result.isWaitingOnly ? 'WAITING' : 'SUCCESS'),
+                        message: result.message,
                         verified: !this.testMode ? success : null
                     };
                     
+                    const resultFile = this.testMode ? 'test-result.json' : 'booking-result.json';
                     await fs.writeFile(
-                        'booking-result.json',
+                        resultFile,
                         JSON.stringify(resultInfo, null, 2)
                     );
                     
-                    if (bookingResult.type === 'waiting') {
-                        await this.log('⚠️ 대기예약으로 등록되었습니다. 취소 발생 시 자동 예약됩니다.');
+                    if (result.isWaitingOnly) {
+                        await this.log('⚠️ 대기예약으로 등록되었습니다. 취소가 발생하면 자동으로 예약됩니다.');
                     }
-                    
-                    success = true; // 대기예약도 성공으로 처리
-                } else if (bookingResult && bookingResult.found && !bookingResult.booked) {
-                    await this.log(`⚠️ ${bookingResult.message}`);
-                    if (bookingResult.message.includes('이미 예약') || 
-                        bookingResult.message.includes('시간초과')) {
-                        break; // 재시도 불필요
-                    }
+                } else if (result.found) {
+                    await this.log('⚠️ 10:30 수업은 있지만 예약 불가');
+                    break;
+                } else {
+                    throw new Error('10:30 수업을 찾을 수 없음');
                 }
                 
             } catch (error) {
@@ -577,14 +562,14 @@ class PilatesBooking {
         if (!success) {
             await this.log('❌❌❌ 예약 실패 ❌❌❌');
             
-            // 실패 결과 저장
+            // 실패 시에도 결과 파일 생성
+            const resultFile = this.testMode ? 'test-result.json' : 'booking-result.json';
             await fs.writeFile(
-                'booking-result.json',
+                resultFile,
                 JSON.stringify({
                     timestamp: new Date().toISOString(),
                     status: 'FAILED',
-                    message: bookingResult?.message || '예약 실패',
-                    retries: retryCount
+                    message: '예약 실패'
                 }, null, 2)
             );
             
@@ -598,6 +583,10 @@ if (!process.env.PILATES_USERNAME || !process.env.PILATES_PASSWORD) {
     console.error('❌ 환경변수가 필요합니다:');
     console.error('   PILATES_USERNAME: 회원이름');
     console.error('   PILATES_PASSWORD: 회원번호');
+    console.error('');
+    console.error('💡 설정 방법:');
+    console.error('   1. .env 파일 생성 (로컬)');
+    console.error('   2. GitHub Secrets 설정 (GitHub Actions)');
     process.exit(1);
 }
 
