@@ -203,121 +203,168 @@ async find1030ClassAndBook(page) {
         await page.waitForSelector('table', { timeout: 5000 });
         await this.takeScreenshot(page, '04-time-table');
         
-        // 10:30 수업 찾기 - 정확한 매칭
+        // 10:30 수업 찾기 - 유연한 검색
         const result = await page.evaluate(() => {
-            const rows = document.querySelectorAll('tr');
+            // 모든 테이블 찾기 (여러 테이블이 있을 수 있음)
+            const tables = document.querySelectorAll('table');
             
-            for (let row of rows) {
-                const cells = row.querySelectorAll('td');
+            // 각 테이블에서 10:30 찾기
+            for (let table of tables) {
+                const rows = table.querySelectorAll('tr');
                 
-                // 각 셀을 순회하며 정확한 시간 찾기
-                for (let i = 0; i < cells.length; i++) {
-                    const cellText = cells[i].textContent.trim();
+                // 각 행 검사
+                for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+                    const row = rows[rowIndex];
+                    const cells = row.querySelectorAll('td');
                     
-                    // 정확한 10:30 매칭 (09:30 제외)
-                    if (cellText === '오전 10:30' || 
-                        cellText === '10:30' ||
-                        (cellText.includes('10:30') && !cellText.includes('09:30'))) {
+                    // 빈 행 스킵
+                    if (cells.length < 2) continue;
+                    
+                    // 현재 행에 10:30이 있는지 확인
+                    let has1030 = false;
+                    let timeColumnIndex = -1;
+                    
+                    for (let cellIndex = 0; cellIndex < cells.length; cellIndex++) {
+                        const cellText = cells[cellIndex].textContent.trim();
                         
-                        console.log('✅ 10:30 수업 발견!');
-                        console.log('행 내용:', row.textContent);
+                        // 다양한 10:30 표현 매칭
+                        if (
+                            cellText === '오전 10:30' ||
+                            cellText === '10:30' ||
+                            cellText === '오전10:30' ||
+                            cellText === 'AM 10:30' ||
+                            cellText === '10시30분' ||
+                            cellText === '오전 10시 30분' ||
+                            (cellText.includes('10') && cellText.includes('30') && !cellText.includes('09:30'))
+                        ) {
+                            // 09:30, 11:30 등 다른 시간 제외
+                            if (cellText.includes('09:30') || 
+                                cellText.includes('11:30') || 
+                                cellText.includes('10:00')) {
+                                continue;
+                            }
+                            
+                            has1030 = true;
+                            timeColumnIndex = cellIndex;
+                            console.log(`✅ 10:30 발견! 행: ${rowIndex + 1}, 열: ${cellIndex + 1}`);
+                            console.log('시간 텍스트:', cellText);
+                            break;
+                        }
+                    }
+                    
+                    // 10:30을 찾았으면 해당 행 처리
+                    if (has1030) {
+                        console.log(`행 ${rowIndex + 1} 처리 중...`);
+                        console.log('행 내용 미리보기:', row.textContent.substring(0, 100) + '...');
                         
-                        // 수강 정보 찾기
-                        let courseInfo = '';
-                        let isFull = false;
-                        let hasDeleteBtn = false;
+                        // 수업 정보 추출 (수업명, 강사명, 정원)
+                        let courseInfo = {
+                            name: '',
+                            instructor: '',
+                            current: 0,
+                            max: 0,
+                            isFull: false
+                        };
                         
-                        // 수강 정보 셀 찾기 (보통 수강종목 컬럼)
+                        // 수업 정보 찾기 (보통 시간 앞이나 뒤 컬럼)
                         for (let j = 0; j < cells.length; j++) {
-                            const text = cells[j].textContent;
-                            // "바렐 체어(승정쌤)(8/8)" 형태
-                            if (text.includes('(') && text.includes('/')) {
-                                courseInfo = text;
-                                // 정원 확인
-                                const match = text.match(/\((\d+)\/(\d+)\)/);
-                                if (match && match[1] === match[2]) {
-                                    isFull = true;
-                                    console.log('정원 초과:', match[0]);
+                            const text = cells[j].textContent.trim();
+                            
+                            // 정원 정보 추출 (예: "(4/8)", "(8/8)")
+                            const capacityMatch = text.match(/\((\d+)\/(\d+)\)/);
+                            if (capacityMatch) {
+                                courseInfo.current = parseInt(capacityMatch[1]);
+                                courseInfo.max = parseInt(capacityMatch[2]);
+                                courseInfo.isFull = courseInfo.current >= courseInfo.max;
+                                
+                                // 수업명과 강사명 추출
+                                // "바렐 체어(승정쌤)(4/8)" 형태
+                                const nameMatch = text.match(/^([^(]+)(?:\(([^)]+)\))?\(/);
+                                if (nameMatch) {
+                                    courseInfo.name = nameMatch[1].trim();
+                                    courseInfo.instructor = nameMatch[2] || '';
                                 }
+                                
+                                console.log(`수업: ${courseInfo.name}, 강사: ${courseInfo.instructor}, 정원: ${courseInfo.current}/${courseInfo.max}`);
                                 break;
                             }
                         }
                         
-                        // 버튼 상태 확인
-                        const buttons = row.querySelectorAll('button, input[type="button"], a');
-                        let buttonFound = false;
+                        // 버튼/링크 찾기
+                        const actionElements = row.querySelectorAll('a, button, input[type="button"], input[type="submit"]');
+                        console.log(`액션 요소 ${actionElements.length}개 발견`);
                         
-                        for (let btn of buttons) {
-                            const btnText = (btn.textContent || btn.value || '').trim();
+                        // 버튼 처리
+                        for (let elem of actionElements) {
+                            const buttonText = (elem.textContent || elem.value || '').trim();
+                            const onclick = elem.getAttribute('onclick') || '';
                             
-                            // 케이스 1: 예약하기 버튼 (정원 여유)
-                            if (btnText === '예약하기') {
-                                console.log('예약하기 버튼 발견!');
-                                btn.click();
+                            console.log(`버튼: "${buttonText}", onclick: "${onclick}"`);
+                            
+                            // 케이스 1: 예약하기 (정원 여유)
+                            if (buttonText === '예약하기' || buttonText.includes('예약하기')) {
+                                console.log('✅ 예약하기 버튼 클릭!');
+                                
+                                // onclick에 inltxt가 있으면 먼저 실행
+                                if (onclick.includes('inltxt')) {
+                                    try {
+                                        eval(onclick);
+                                        console.log('inltxt 함수 실행됨');
+                                    } catch(e) {
+                                        console.log('inltxt 실행 실패:', e);
+                                    }
+                                }
+                                
+                                elem.click();
                                 return {
                                     found: true,
                                     booked: true,
-                                    message: '10:30 수업 예약하기 클릭',
+                                    message: `10:30 ${courseInfo.name || '수업'} 예약하기 클릭`,
                                     type: 'normal',
                                     courseInfo: courseInfo
                                 };
                             }
                             
-                            // 케이스 2: 삭제 버튼 (이미 예약됨)
-                            else if (btnText === '삭제' || btnText === '취소') {
-                                hasDeleteBtn = true;
+                            // 케이스 2: 대기예약 (정원 초과)
+                            else if (buttonText === '대기예약' || buttonText.includes('대기')) {
+                                console.log('⚠️ 대기예약 버튼 클릭!');
+                                elem.click();
+                                return {
+                                    found: true,
+                                    booked: true,
+                                    message: `10:30 ${courseInfo.name || '수업'} 대기예약 클릭`,
+                                    type: 'waiting',
+                                    courseInfo: courseInfo
+                                };
+                            }
+                            
+                            // 케이스 3: 삭제/취소 (이미 예약됨)
+                            else if (buttonText === '삭제' || buttonText === '취소' || buttonText.includes('삭제')) {
                                 return {
                                     found: true,
                                     booked: false,
-                                    message: '10:30 수업 이미 예약되어 있음',
+                                    message: `10:30 ${courseInfo.name || '수업'} 이미 예약됨`,
                                     type: 'already',
                                     courseInfo: courseInfo
                                 };
                             }
-                            
-                            // 케이스 3: 대기예약 버튼
-                            else if (btnText === '대기예약' || btnText.includes('대기')) {
-                                console.log('대기예약 버튼 발견!');
-                                btn.click();
-                                return {
-                                    found: true,
-                                    booked: true,
-                                    message: '10:30 수업 대기예약 클릭',
-                                    type: 'waiting',
-                                    courseInfo: courseInfo
-                                };
-                            }
                         }
                         
-                        // 케이스 4: 버튼이 없고 정원 초과 → 대기예약 가능
-                        if (isFull && !hasDeleteBtn) {
-                            console.log('정원 초과 - 대기예약 가능 상태');
+                        // 버튼이 없지만 정원 초과인 경우
+                        if (courseInfo.isFull && actionElements.length === 0) {
+                            console.log('정원 초과, 대기예약 방법 찾기...');
                             
-                            // 체크박스 찾기 (대기예약용)
+                            // 체크박스 확인
                             const checkbox = row.querySelector('input[type="checkbox"]');
                             if (checkbox) {
                                 checkbox.checked = true;
                                 checkbox.click();
-                                console.log('체크박스 선택 (대기예약)');
+                                console.log('체크박스 선택');
                                 
                                 return {
                                     found: true,
                                     booked: true,
-                                    message: '10:30 수업 대기예약 준비 (체크박스)',
-                                    type: 'waiting',
-                                    needWaitingProcess: true,
-                                    courseInfo: courseInfo
-                                };
-                            }
-                            
-                            // 체크박스가 없으면 행 클릭
-                            const clickableElement = row.querySelector('a, td');
-                            if (clickableElement) {
-                                clickableElement.click();
-                                return {
-                                    found: true,
-                                    booked: true,
-                                    message: '10:30 수업 대기예약 준비 (행 클릭)',
+                                    message: `10:30 ${courseInfo.name || '수업'} 대기예약 준비`,
                                     type: 'waiting',
                                     needWaitingProcess: true,
                                     courseInfo: courseInfo
@@ -325,71 +372,103 @@ async find1030ClassAndBook(page) {
                             }
                         }
                         
-                        // 그 외 예약 불가
+                        // 예약 불가
                         return {
                             found: true,
                             booked: false,
-                            message: `10:30 수업 예약 불가 (${courseInfo})`,
+                            message: `10:30 ${courseInfo.name || '수업'} 예약 불가`,
                             courseInfo: courseInfo
                         };
                     }
                 }
             }
             
+            // 10:30을 못 찾은 경우 - 디버깅 정보
+            console.log('❌ 10:30 수업을 찾을 수 없음');
+            
+            // 모든 시간 수집 (디버깅용)
+            const allTimes = [];
+            document.querySelectorAll('td').forEach(cell => {
+                const text = cell.textContent.trim();
+                if (text.match(/\d{1,2}:\d{2}/) || text.includes('오전') || text.includes('오후')) {
+                    if (text.length < 20) { // 너무 긴 텍스트 제외
+                        allTimes.push(text);
+                    }
+                }
+            });
+            
+            console.log('페이지의 모든 시간:', allTimes.join(', '));
+            
             return {
                 found: false,
                 booked: false,
-                message: '10:30 수업을 찾을 수 없음'
+                message: '10:30 수업을 찾을 수 없음',
+                debugInfo: allTimes
             };
         });
         
+        // 결과 로깅
         await this.log(`🔍 검색 결과: ${result.message}`);
+        
         if (result.courseInfo) {
-            await this.log(`📚 수업 정보: ${result.courseInfo}`);
+            const info = result.courseInfo;
+            await this.log(`📚 수업 상세: ${info.name} ${info.instructor ? `(${info.instructor})` : ''} [${info.current}/${info.max}]`);
         }
         
-        // 대기예약 후처리 (필요한 경우)
+        if (result.debugInfo && result.debugInfo.length > 0) {
+            await this.log(`🔍 페이지의 시간들: ${result.debugInfo.slice(0, 10).join(', ')}`);
+        }
+        
+        // 대기예약 후처리
         if (result.needWaitingProcess && !this.testMode) {
             await this.log('⏳ 대기예약 프로세스 진행...');
             await page.waitForTimeout(1000);
             
-            // 하단의 대기예약/목록보기 버튼 찾기
             const processed = await page.evaluate(() => {
-                const allButtons = document.querySelectorAll('button, input[type="button"], input[type="submit"], a');
+                // 다양한 버튼 찾기
+                const buttons = document.querySelectorAll('button, input[type="button"], input[type="submit"], a');
                 
-                // 우선순위 1: 대기예약 버튼
-                for (let btn of allButtons) {
+                for (let btn of buttons) {
                     const text = (btn.textContent || btn.value || '').trim();
-                    if (text === '대기예약' || text.includes('대기')) {
-                        console.log('대기예약 버튼 클릭!');
+                    
+                    // 대기예약 관련 버튼
+                    if (text === '대기예약' || 
+                        text === '목록보기' || 
+                        text === '예약하기' ||
+                        text === '확인') {
+                        console.log(`"${text}" 버튼 클릭!`);
                         btn.click();
-                        return 'waiting';
+                        return text;
                     }
                 }
-                
-                // 우선순위 2: 목록보기 버튼
-                for (let btn of allButtons) {
-                    const text = (btn.textContent || btn.value || '').trim();
-                    if (text === '목록보기' || text === '예약하기') {
-                        console.log('목록보기/예약하기 버튼 클릭!');
-                        btn.click();
-                        return 'submit';
-                    }
-                }
-                
                 return false;
             });
             
             if (processed) {
-                await this.log(`✅ ${processed === 'waiting' ? '대기예약' : '제출'} 버튼 클릭 완료`);
+                await this.log(`✅ "${processed}" 버튼 클릭 완료`);
                 await page.waitForTimeout(2000);
             }
         }
         
-        // 결과 스크린샷
+        // 완료 스크린샷
         if (result.booked) {
             await page.waitForTimeout(2000);
             await this.takeScreenshot(page, '05-after-booking');
+            
+            // 성공 메시지 확인
+            const confirmation = await page.evaluate(() => {
+                const bodyText = document.body.innerText || '';
+                return {
+                    success: bodyText.includes('예약완료') || bodyText.includes('예약이 완료'),
+                    waiting: bodyText.includes('대기예약') || bodyText.includes('대기 예약')
+                };
+            });
+            
+            if (confirmation.success) {
+                await this.log('✅ 예약 완료 확인!');
+            } else if (confirmation.waiting) {
+                await this.log('⚠️ 대기예약 등록 확인!');
+            }
         }
         
         return result;
