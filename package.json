@@ -10,7 +10,7 @@
     "book": "node booking-script.js",
     "book:now": "SKIP_WAIT=true node booking-script.js",
     "book:test": "TEST_MODE=true SKIP_WAIT=true node booking-script.js",
-    "wait": "node wait-until-noon.js"
+    "wait": "node wait-until-midnight.js"
   },
   "dependencies": {
     "puppeteer": "^21.0.0",
