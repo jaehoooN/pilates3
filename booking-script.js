@@ -581,12 +581,13 @@ async find1030ClassAndBook(page) {
 
     async run() {
         await this.init();
-        
-        // 12시 대기 (필요한 경우)
+    
+        // 자정 대기 (필요한 경우)
         if (!this.skipWait && !this.testMode) {
-            const waitScript = require('./wait-until-noon');
-            await waitScript.waitUntilNoon();
+            const waitScript = require('./wait-until-midnight');  // ⚠️ 파일명 변경
+            await waitScript.waitUntilMidnight();  // ⚠️ 함수명 변경
         }
+    
         
         let retryCount = 0;
         let success = false;
