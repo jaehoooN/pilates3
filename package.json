@@ -8,9 +8,7 @@
     "test:dry": "TEST_MODE=dry-run node test-script.js",
     "test:real": "TEST_MODE=real node test-script.js",
     "book": "node booking-script.js",
-    "book:now": "SKIP_WAIT=true node booking-script.js",
-    "book:test": "TEST_MODE=true SKIP_WAIT=true node booking-script.js",
-    "wait": "node wait-until-midnight.js"
+    "book:test": "TEST_MODE=true node booking-script.js"
   },
   "dependencies": {
     "puppeteer": "^21.0.0",
