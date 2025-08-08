@@ -2,20 +2,12 @@ name: 🏋️ 필라테스 자동 예약
 
 on:
   schedule:
-    # 한국시간 매일 23:56 (UTC 14:56)
-    # 5분 실행 시간을 고려하여 자정 4분 전 시작
-    - cron: '56 14 * * *'
+    # 한국시간 매일 00:00 (UTC 15:00)
+    # 정각에 실행
+    - cron: '0 15 * * *'
   
   workflow_dispatch:
     inputs:
-      skip_wait:
-        description: '자정 대기 건너뛰기'
-        required: false
-        default: 'false'
-        type: choice
-        options:
-          - 'true'
-          - 'false'
       test_mode:
         description: '테스트 모드 (실제 예약하지 않음)'
         required: false
@@ -42,15 +34,10 @@ jobs:
     - name: 🔧 의존성 설치
       run: npm install
     
-    - name: ⏰ 자정까지 대기
-      if: github.event_name == 'schedule' || github.event.inputs.skip_wait == 'false'
-      run: node wait-until-midnight.js
-    
     - name: 🎯 예약 실행
       env:
         PILATES_USERNAME: ${{ secrets.PILATES_USERNAME }}
         PILATES_PASSWORD: ${{ secrets.PILATES_PASSWORD }}
-        SKIP_WAIT: ${{ github.event.inputs.skip_wait }}
         TEST_MODE: ${{ github.event.inputs.test_mode }}
         NODE_ENV: production
         HEADLESS: true
