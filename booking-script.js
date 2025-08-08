@@ -17,7 +17,6 @@ class PilatesBooking {
         
         // 테스트 모드 설정
         this.testMode = process.env.TEST_MODE === 'true';
-        this.skipWait = process.env.SKIP_WAIT === 'true';
     }
 
     async init() {
@@ -581,13 +580,6 @@ async find1030ClassAndBook(page) {
 
     async run() {
         await this.init();
-    
-        // 자정 대기 (필요한 경우)
-        if (!this.skipWait && !this.testMode) {
-            const waitScript = require('./wait-until-midnight');  // ⚠️ 파일명 변경
-            await waitScript.waitUntilMidnight();  // ⚠️ 함수명 변경
-        }
-    
         
         let retryCount = 0;
         let success = false;
