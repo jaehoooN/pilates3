@@ -13,7 +13,7 @@
 
 ## 📋 기능
 
-- 매일 12시 정각 자동 실행
+- 매일 자정 자동 실행
 - 7일 후 10:30 수업 예약
 - 예약 실패 시 3회 재시도
 - 대기예약 자동 처리 (정원 초과 시)
@@ -41,10 +41,7 @@ cp .env.example .env
 # 테스트 모드 (실제 예약하지 않음)
 npm run book:test
 
-# 즉시 예약 실행 (12시 대기 없이)
-npm run book:now
-
-# 정규 예약 실행 (12시 대기)
+# 예약 실행
 npm run book
 ```
 
@@ -52,11 +49,9 @@ npm run book
 
 | 명령어 | 설명 |
 |--------|------|
-| `npm run book` | 실제 예약 실행 (12시 대기) |
-| `npm run book:now` | 즉시 예약 실행 |
+| `npm run book` | 예약 실행 |
 | `npm run book:test` | 테스트 모드 (실제 예약 안함) |
 | `npm run test` | 시스템 테스트 |
-| `npm run wait` | 12시 대기 테스트 |
 
 ## 🔑 GitHub Actions 설정
 
@@ -71,7 +66,6 @@ npm run book
 ```
 pilates-booking-improved/
 ├── booking-script.js      # 메인 예약 스크립트 (개선됨)
-├── wait-until-noon.js     # 12시 대기 스크립트
 ├── package.json           # 프로젝트 설정
 ├── .env.example           # 환경변수 예제
 └── .github/
@@ -108,7 +102,7 @@ graph TD
 ## ⚠️ 주의사항
 
 - 회원번호는 비밀번호가 아닌 회원 고유번호입니다
-- 12시 정각에 실행되므로 GitHub Actions 스케줄 정확도에 의존합니다
+- 자정에 실행되므로 GitHub Actions 스케줄 정확도에 의존합니다
 - 대기예약은 취소가 발생하면 자동으로 정규예약으로 전환됩니다
 - 예약 실패 시 로그를 확인하여 원인을 파악하세요
 
