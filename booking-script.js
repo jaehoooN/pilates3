@@ -17,14 +17,18 @@ class PilatesBooking {
         
         // 테스트 모드 설정
         this.testMode = process.env.TEST_MODE === 'true';
+        
+        // 예약 성공 플래그
+        this.bookingSuccess = false;
     }
 
-    // 한국 시간(KST) 기준으로 날짜 계산
+    // 한국 시간(KST) 기준으로 날짜 계산 (수정됨)
     getKSTDate() {
         const now = new Date();
-        // UTC 기준 현재 시간에 9시간(한국 시간) 추가
+        // UTC 시간에서 KST로 정확한 변환
+        const utcTime = now.getTime() + (now.getTimezoneOffset() * 60000);
         const kstOffset = 9 * 60 * 60 * 1000; // 9시간을 밀리초로
-        const kstTime = new Date(now.getTime() + kstOffset);
+        const kstTime = new Date(utcTime + kstOffset);
         return kstTime;
     }
 
@@ -69,7 +73,7 @@ class PilatesBooking {
         
         await this.log(`=== 예약 시작: ${kstNow.toLocaleString('ko-KR')} (KST) ===`);
         await this.log(`📅 예약 대상 날짜: ${targetInfo.year}년 ${targetInfo.month}월 ${targetInfo.day}일`);
-        await this.log(`🕘 현재 KST 시간: ${targetInfo.kstString}`);
+        await this.log(`🕘 현재 KST 시간: ${kstNow.toLocaleString('ko-KR')}`);
         
         // 주말 체크 - KST 기준 Date 객체 직접 사용
         const targetDate = targetInfo.dateObject; // KST 기준 Date 객체
@@ -448,9 +452,12 @@ class PilatesBooking {
                 
                 await page.waitForTimeout(2000);
                 
-                // Submit 처리
+                // Submit 처리 (수정됨: 서버 부하 방지를 위한 짧은 대기 추가)
                 if (result.needSubmit && !this.testMode) {
                     await this.log('📝 Submit 버튼 찾는 중...');
+                    
+                    // Submit 전 짧은 대기 (서버 부하 방지)
+                    await page.waitForTimeout(500);
                     
                     const submitSuccess = await page.evaluate(() => {
                         // 모든 submit 관련 요소 찾기
@@ -549,19 +556,13 @@ class PilatesBooking {
             await page.waitForTimeout(3000);
             await this.takeScreenshot(page, '08-booking-list-page');
             
-            // 예약 내역 확인
-            const bookingVerified = await page.evaluate(() => {
+            // 예약 내역 확인 (수정됨: KST 날짜 계산 로직 개선)
+            const targetInfo = this.getTargetDate();
+            const bookingVerified = await page.evaluate((targetInfo) => {
                 const bodyText = document.body.innerText || document.body.textContent || '';
                 
-                // KST 기준 7일 후 날짜 계산
-                const kstNow = new Date();
-                const kstOffset = 9 * 60 * 60 * 1000;
-                const kstTime = new Date(kstNow.getTime() + kstOffset);
-                const targetDate = new Date(kstTime);
-                targetDate.setDate(targetDate.getDate() + 7);
-                
-                const month = targetDate.getMonth() + 1;
-                const day = targetDate.getDate();
+                const month = targetInfo.month;
+                const day = targetInfo.day;
                 
                 console.log(`찾는 날짜: ${month}월 ${day}일 (KST 기준)`);
                 
@@ -598,7 +599,7 @@ class PilatesBooking {
                 }
                 
                 return { verified: false };
-            });
+            }, targetInfo);
             
             if (bookingVerified.verified) {
                 if (bookingVerified.isWaiting) {
@@ -617,24 +618,17 @@ class PilatesBooking {
             
             await page.waitForTimeout(2000);
             
-            const calendarVerified = await page.evaluate(() => {
-                const kstNow = new Date();
-                const kstOffset = 9 * 60 * 60 * 1000;
-                const kstTime = new Date(kstNow.getTime() + kstOffset);
-                const targetDate = new Date(kstTime);
-                targetDate.setDate(targetDate.getDate() + 7);
-                const day = targetDate.getDate();
-                
+            const calendarVerified = await page.evaluate((targetDay) => {
                 const cells = document.querySelectorAll('td');
                 for (let cell of cells) {
                     const cellText = cell.textContent || '';
-                    if (cellText.includes(String(day)) && cellText.includes('*')) {
-                        console.log(`✅ 캘린더에서 ${day}일 예약 확인 (*)`);
+                    if (cellText.includes(String(targetDay)) && cellText.includes('*')) {
+                        console.log(`✅ 캘린더에서 ${targetDay}일 예약 확인 (*)`);
                         return true;
                     }
                 }
                 return false;
-            });
+            }, targetInfo.day);
             
             if (calendarVerified) {
                 await this.log('✅ 캘린더에서 예약이 확인되었습니다!');
@@ -642,12 +636,18 @@ class PilatesBooking {
                 return true;
             }
             
+            // 동시신청 오류인 경우 실패로 처리
+            if (!this.bookingSuccess) {
+                await this.log('❌ 예약 확인 실패 - 동시신청 오류 또는 예약 실패');
+                return false;
+            }
+            
             await this.log('⚠️ 명시적 예약 확인 실패 - 예약 프로세스는 완료됨');
             return true;
             
         } catch (error) {
             await this.log(`⚠️ 예약 확인 과정 에러: ${error.message}`);
-            return true;
+            return !this.bookingSuccess ? false : true;
         }
     }
 
@@ -691,17 +691,36 @@ class PilatesBooking {
                     }
                 });
                 
-                // 알림 처리
+                // 알림 처리 (수정됨: 동시신청 오류 처리 강화)
                 page.on('dialog', async dialog => {
                     const message = dialog.message();
                     await this.log(`📢 알림: ${message}`);
                     
+                    // 동시신청 오류 처리
+                    if (message.includes('동시신청') || message.includes('잠시 후')) {
+                        await dialog.accept();
+                        await this.log('⚠️ 동시신청 충돌 - 재시도 필요');
+                        this.bookingSuccess = false;
+                        throw new Error('동시신청 충돌');
+                    }
+                    
+                    // 시간 초과 오류
+                    if (message.includes('시간초과') || message.includes('time out')) {
+                        await dialog.accept();
+                        await this.log('⚠️ 시간 초과 - 재시도 필요');
+                        this.bookingSuccess = false;
+                        throw new Error('시간 초과');
+                    }
+                    
+                    // 예약 성공
                     if (message.includes('예약') && 
-                        (message.includes('완료') || message.includes('성공'))) {
+                        (message.includes('완료') || message.includes('성공') || message.includes('등록'))) {
+                        this.bookingSuccess = true;
                         success = true;
                         await this.log('🎉 예약 성공 알림 확인!');
                     }
                     
+                    // 로그인 오류
                     if (message.includes('등록되어 있지 않습니다')) {
                         await dialog.accept();
                         throw new Error('로그인 정보 오류');
@@ -728,6 +747,11 @@ class PilatesBooking {
                         verified = await this.verifyBooking(page);
                     }
                     
+                    // 동시신청 오류가 발생했다면 재시도
+                    if (!this.bookingSuccess && !verified) {
+                        throw new Error('예약 확인 실패 - 동시신청 오류 가능성');
+                    }
+                    
                     success = true;
                     
                     // 결과 저장
@@ -739,7 +763,8 @@ class PilatesBooking {
                         message: result.message,
                         verified: !this.testMode ? verified : null,
                         note: verified ? '예약 확인 완료' : '예약 프로세스 완료',
-                        kstTime: this.getKSTDate().toLocaleString('ko-KR')
+                        kstTime: this.getKSTDate().toLocaleString('ko-KR'),
+                        bookingSuccess: this.bookingSuccess
                     };
                     
                     const resultFile = this.testMode ? 'test-result.json' : 'booking-result.json';
@@ -785,8 +810,10 @@ class PilatesBooking {
                 await this.log(`❌ 시도 ${retryCount}/${this.maxRetries} 실패: ${error.message}`);
                 
                 if (retryCount < this.maxRetries) {
-                    await this.log(`⏳ ${this.retryDelay/1000}초 후 재시도...`);
-                    await new Promise(resolve => setTimeout(resolve, this.retryDelay));
+                    // 동시신청 오류시 더 긴 대기 (수정됨)
+                    const delay = error.message.includes('동시신청') ? 3000 : this.retryDelay;
+                    await this.log(`⏳ ${delay/1000}초 후 재시도...`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
                 }
             } finally {
                 await browser.close();
@@ -795,6 +822,25 @@ class PilatesBooking {
         
         if (!success) {
             await this.log('❌❌❌ 예약 실패 ❌❌❌');
+            
+            // 실패 결과 저장
+            const targetInfo = this.getTargetDate();
+            const resultInfo = {
+                timestamp: this.getKSTDate().toISOString(),
+                date: `${targetInfo.year}-${targetInfo.month}-${targetInfo.day}`,
+                class: '10:30',
+                status: 'FAILED',
+                message: '예약 실패 - 동시신청 충돌 또는 시스템 오류',
+                kstTime: this.getKSTDate().toLocaleString('ko-KR'),
+                bookingSuccess: false
+            };
+            
+            const resultFile = this.testMode ? 'test-result.json' : 'booking-result.json';
+            await fs.writeFile(
+                resultFile,
+                JSON.stringify(resultInfo, null, 2)
+            );
+            
             process.exit(1);
         }
     }
