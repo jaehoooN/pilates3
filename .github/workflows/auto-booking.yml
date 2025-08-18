@@ -4,7 +4,7 @@ on:
   schedule:
     # 한국시간 매일 00:00 (UTC 15:00)
     # 정각에 실행하되, 주말은 스크립트에서 자동 스킵
-    - cron: '56 14 * * *'
+    - cron: '0 15 * * *'  # 정확히 자정에 실행하도록 수정
   
   workflow_dispatch:
     inputs:
@@ -33,7 +33,7 @@ jobs:
       target_date: ${{ steps.check.outputs.target_date }}
       day_name: ${{ steps.check.outputs.day_name }}
     steps:
-    - name: 📅 주말 체크 (KST 기준)
+    - name: 📅 주말 체크 (KST 기준) - 수정됨
       id: check
       run: |
         # 현재 UTC 시간을 KST로 변환하여 7일 후 계산
@@ -42,6 +42,11 @@ jobs:
         # KST 기준 현재 시간 (UTC + 9시간)
         current_kst=$(TZ='Asia/Seoul' date)
         echo "현재 KST: $current_kst"
+        
+        # KST 기준 현재 요일 확인
+        current_day=$(TZ='Asia/Seoul' date '+%u')
+        current_day_name=$(TZ='Asia/Seoul' date '+%A')
+        echo "현재 요일: $current_day_name (숫자: $current_day)"
         
         # KST 기준 7일 후 날짜 계산
         target_date=$(TZ='Asia/Seoul' date -d '+7 days' '+%Y-%m-%d')
@@ -61,12 +66,12 @@ jobs:
         esac
         
         echo "🎯 예약 대상 날짜: $target_date ($day_name)"
-        echo "📊 요일 번호: $target_day (1=월, 7=일)"
+        echo "📊 예약 대상 요일 번호: $target_day (1=월, 2=화, 3=수, 4=목, 5=금, 6=토, 7=일)"
         
-        # 주말 체크 (6=토요일, 7=일요일)
+        # 주말 체크 수정: 6=토요일, 7=일요일만 주말로 판정
         if [ "$target_day" -eq 6 ] || [ "$target_day" -eq 7 ]; then
           if [ "${{ github.event.inputs.force_weekend }}" = "true" ]; then
-            echo "⚠️ 주말이지만 강제 실행 모드"
+            echo "⚠️ 주말($day_name)이지만 강제 실행 모드"
             should_run="true"
           else
             echo "🚫 주말($day_name)이므로 예약 건너뛰기"
@@ -76,6 +81,12 @@ jobs:
           echo "✅ 평일($day_name)이므로 예약 진행"
           should_run="true"
         fi
+        
+        # 디버깅을 위한 추가 정보
+        echo "🔍 디버깅 정보:"
+        echo "   - 현재 KST 요일: $current_day ($current_day_name)"
+        echo "   - 예약 대상 요일: $target_day ($day_name)"
+        echo "   - 실행 여부: $should_run"
         
         echo "should_run=$should_run" >> $GITHUB_OUTPUT
         echo "target_date=$target_date" >> $GITHUB_OUTPUT
@@ -166,3 +177,4 @@ jobs:
         echo "📆 요일: ${{ needs.check-weekday.outputs.day_name }}"
         echo "⏭️ 다음 평일에 자동 실행됩니다."
         echo "🕐 현재 KST: $(TZ='Asia/Seoul' date)"
+        echo "🔍 주말 판정: 토요일(6) 또는 일요일(7)만 주말로 처리"
