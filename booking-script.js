@@ -22,10 +22,10 @@ class PilatesBooking {
         this.bookingSuccess = false;
     }
 
-    // 한국 시간(KST) 기준으로 날짜 계산 (수정됨)
+    // 한국 시간(KST) 기준으로 날짜 계산 (정확한 계산)
     getKSTDate() {
         const now = new Date();
-        // UTC 시간에서 KST로 정확한 변환
+        // UTC 시간에서 KST로 정확한 변환 (+9시간)
         const utcTime = now.getTime() + (now.getTimezoneOffset() * 60000);
         const kstOffset = 9 * 60 * 60 * 1000; // 9시간을 밀리초로
         const kstTime = new Date(utcTime + kstOffset);
@@ -42,16 +42,20 @@ class PilatesBooking {
             year: targetDate.getFullYear(),
             month: targetDate.getMonth() + 1,
             day: targetDate.getDate(),
-            dayOfWeek: targetDate.getDay(), // KST 기준 요일 추가
+            dayOfWeek: targetDate.getDay(), // 0=일요일, 1=월요일, ..., 6=토요일
             dateObject: targetDate, // KST Date 객체 직접 반환
             kstString: targetDate.toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })
         };
     }
 
-    // 주말 체크 함수
+    // 주말 체크 함수 (수정됨: 0=일요일, 6=토요일만 주말)
     isWeekend(date) {
-        const dayOfWeek = date.getDay(); // 0=일요일, 6=토요일
-        return dayOfWeek === 0 || dayOfWeek === 6;
+        const dayOfWeek = date.getDay(); // 0=일요일, 1=월요일, ..., 6=토요일
+        const isWeekendDay = dayOfWeek === 0 || dayOfWeek === 6; // 일요일(0) 또는 토요일(6)
+        
+        console.log(`주말 체크: 요일=${dayOfWeek} (0=일, 1=월, 2=화, 3=수, 4=목, 5=금, 6=토), 주말여부=${isWeekendDay}`);
+        
+        return isWeekendDay;
     }
 
     // 요일 이름 반환
@@ -78,7 +82,10 @@ class PilatesBooking {
         // 주말 체크 - KST 기준 Date 객체 직접 사용
         const targetDate = targetInfo.dateObject; // KST 기준 Date 객체
         const dayName = this.getDayName(targetDate);
-        await this.log(`📆 예약 대상 요일: ${dayName} (KST 기준)`);
+        const dayOfWeek = targetDate.getDay();
+        
+        await this.log(`📆 예약 대상 요일: ${dayName} (숫자: ${dayOfWeek}, KST 기준)`);
+        await this.log(`🔍 주말 판정 기준: 0=일요일, 6=토요일만 주말`);
         
         if (this.isWeekend(targetDate)) {
             await this.log(`🚫 주말(${dayName})에는 예약하지 않습니다.`);
@@ -88,11 +95,11 @@ class PilatesBooking {
                 timestamp: this.getKSTDate().toISOString(),
                 date: `${targetInfo.year}-${targetInfo.month}-${targetInfo.day}`,
                 dayOfWeek: dayName,
-                dayOfWeekNumber: targetInfo.dayOfWeek,
+                dayOfWeekNumber: dayOfWeek,
                 status: 'WEEKEND_SKIP',
                 message: `주말(${dayName}) 예약 건너뛰기`,
                 kstTime: this.getKSTDate().toLocaleString('ko-KR'),
-                note: 'KST 기준 주말 판정'
+                note: 'KST 기준 주말 판정 (0=일요일, 6=토요일)'
             };
             
             const resultFile = this.testMode ? 'test-result.json' : 'booking-result.json';
